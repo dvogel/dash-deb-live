@@ -10,39 +10,6 @@
 # the src/post-bootstrap directory).
 CFG_DISKSIZE_MB=4000
 
-# TODO: Install openssh server
-
-# TODO: Still prompted to select keyboard layout during apt-get, on keyboard-configuration
-#
-#perl: warning: Setting locale failed.
-#perl: warning: Please check that your locale settings:
-#        LANGUAGE = "",
-#        LC_ALL = (unset),
-#        LANG = "en_US.utf8"
-#    are supported and installed on your system.
-#perl: warning: Falling back to the standard locale ("C").
-#locale: Cannot set LC_CTYPE to default locale: No such file or directory
-#locale: Cannot set LC_MESSAGES to default locale: No such file or directory
-#locale: Cannot set LC_ALL to default locale: No such file or directory
-#Extracting templates from packages: 100%
-#Preconfiguring packages ...
-#locale: Cannot set LC_CTYPE to default locale: No such file or directory
-#locale: Cannot set LC_MESSAGES to default locale: No such file or directory
-#locale: Cannot set LC_ALL to default locale: No such file or directory
-#locale: Cannot set LC_CTYPE to default locale: No such file or directory
-#locale: Cannot set LC_MESSAGES to default locale: No such file or directory
-#locale: Cannot set LC_ALL to default locale: No such file or directory
-#/usr/bin/locale: Cannot set LC_CTYPE to default locale: No such file or directory
-#/usr/bin/locale: Cannot set LC_MESSAGES to default locale: No such file or directory
-#/usr/bin/locale: Cannot set LC_ALL to default locale: No such file or directory
-#E: Can not write log (Is /dev/pts mounted?) - posix_openpt (2: No such file or directory)
-#Fetched 376 MB in 10min 26s (601 kB/s)
-#Selecting previously unselected package libgpm2:amd64.
-#(Reading database ... 9051 files and directories currently installed.)
-#Preparing to unpack .../libgpm2_1.20.4-6.1+b2_amd64.deb ...
-#Progress: [  0%]
-
-
 
 if [[ "$UID" -ne 0 ]]; then
     echo "This script must be run using sudo."
@@ -83,6 +50,7 @@ if [[ "${1}" == "build" ]]; then
     which debootstrap
     which mount
     which umount
+    which pkill
     which mkfs.msdos
     which mkfs.ext3
 
@@ -100,6 +68,11 @@ if [[ "${1}" == "build" ]]; then
 
     function cleanup_after_build_or_error () {
         set +o errexit
+        if [[ -d "${TARGETPATH}" ]]; then
+            chroot "${TARGETPATH}" pkill uuidd
+            chroot "${TARGETPATH}" pkill dbus-daemon
+            sleep 1
+        fi
         umount "${EFIPATH}"
         umount "${TARGETPATH}"
         [[ "${OUTSIDE_PROCPATH}" ]] && umount "${OUTSIDE_PROCPATH}"
@@ -160,11 +133,11 @@ if [[ "${1}" == "build" ]]; then
 
     DEBOOTSTRAP_PKGLIST=$(cat PACKAGES | sed -e '/^\s*$/d' -e '/^#/d' | tr '\n' ',')
     APT_PKGLIST=$(cat PACKAGES | sed -e '/^\s*$/d' -e '/^#/d' | tr '\n' ' ')
-    debootstrap --arch=amd64 --components=main,contrib,non-free --include=makedev,locales --no-check-gpg --keep-debootstrap-dir stretch "${TARGETPATH}"
+    debootstrap --arch=amd64 --components=main,contrib,non-free --include=makedev,locales,procps --no-check-gpg --keep-debootstrap-dir stretch "${TARGETPATH}"
 
     # Copy any packages downloaded by debootstrap back into our shared cache.
     function cache_downloaded_packages () {
-        rsync --archive --filter "include **/*.deb" --filter "exclude *" "${TARGETPATH}/var/cache/apt/archives" src/DEBCACHE/
+        rsync --verbose --archive --filter "include **/*.deb" --filter "exclude *" "${TARGETPATH}/var/cache/apt/archives/" src/DEBCACHE/
     }
     cache_downloaded_packages
 
@@ -176,17 +149,19 @@ if [[ "${1}" == "build" ]]; then
         fi
     }
 
-    # Create a naive set of device files inside the chroot. We have to do this
-    # before we bind the host /dev/pts to the /dev/pts path inside the chroot.
-    chroot "${TARGETPATH}" /sbin/MAKEDEV generic
 
     # We're going to use chroot to run apt-get inside the target filesystem.
     # The post-install scripts of some packages will require the proc and device
     # filesystems.
     OUTSIDE_PROCPATH="${TARGETPATH}/proc"
+    mount -t proc proc "${OUTSIDE_PROCPATH}"
+
+    # Create a naive set of device files inside the chroot. We have to do this
+    # before we bind the host /dev/pts to the /dev/pts path inside the chroot.
+    chroot "${TARGETPATH}" /sbin/MAKEDEV -d /dev generic
+
     OUTSIDE_DEVPTSPATH="${TARGETPATH}/dev/pts"
     mount --bind /dev/pts "${OUTSIDE_DEVPTSPATH}"
-    mount -t proc proc "${OUTSIDE_PROCPATH}"
 
 
     # Create a script inside the target directory so that it can be run from within a chroot
@@ -194,11 +169,9 @@ if [[ "${1}" == "build" ]]; then
     OUTSIDE_SCRIPTPATH="${TARGETPATH}${INSIDE_SCRIPTPATH}"
     ensure_directory_exists "${OUTSIDE_SCRIPTPATH}"
     cat > "${OUTSIDE_SCRIPTPATH}" <<-EOF
-        locale-gen
-
 	groupadd --system autologin
 	groupadd --system nopasswdlogin
-	useradd --user-group --groups autologin,nopasswdlogin,netdev cctv 
+	useradd --user-group --groups autologin,nopasswdlogin,netdev,sudo cctv
 	echo cctv:cctv | chpasswd
 
 
@@ -206,17 +179,17 @@ if [[ "${1}" == "build" ]]; then
         export DEBIAN_FRONTEND=noninteractive
         apt-get clean
         apt-get update
-        apt-get -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confnew" --assume-yes --show-progress install ${APT_PKGLIST}
+        RUNLEVEL=1 apt-get -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confnew" --assume-yes --show-progress install ${APT_PKGLIST}
 EOF
     chmod u+x "${OUTSIDE_SCRIPTPATH}"
-    OUTSIDE_DEVPTSPATH="${TARGETPATH}/dev/pts"
-    mount --bind /dev/pts "${OUTSIDE_DEVPTSPATH}"
     chroot "${TARGETPATH}" "${INSIDE_SCRIPTPATH}"
 
     cache_downloaded_packages
 
     # Copy our config files into the chroot
     rsync --verbose --recursive --links --times src/post-bootstrap/ "${TARGETPATH}/"    
+    chroot "${TARGETPATH}" locale-gen
+    chroot "${TARGETPATH}" chown -R cctv:cctv "/home/cctv"
 
 
 fi # End of [[ "${1}" == "build" ]]

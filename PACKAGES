@@ -5,6 +5,7 @@ live-config-systemd
 live-tools
 
 # Basic tools to get a system up and running.
+less
 locales
 user-setup
 sudo
@@ -52,4 +53,5 @@ chromium
 
 # For remote administration.
 vnc4server
+openssh-server
 
