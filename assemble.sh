@@ -10,12 +10,7 @@
 # the src/post-bootstrap directory).
 CFG_DISKSIZE_MB=4000
 
-# TODO: Deal with this error about /dev/pts:
-# E: Can not write log (Is /dev/pts mounted?) - posix_openpt (2: No such file or directory)
-
-# TODO: Deal with this error about /proc:
-# Starting SMP IRQ Balancer: irqbalancestart-stop-daemon: nothing in /proc -
-# not mounted?  failed!
+# TODO: Install openssh server
 
 # TODO: Still prompted to select keyboard layout during apt-get, on keyboard-configuration
 #
@@ -222,7 +217,6 @@ EOF
 
     # Copy our config files into the chroot
     rsync --verbose --recursive --links --times src/post-bootstrap/ "${TARGETPATH}/"    
-EOF
 
 
 fi # End of [[ "${1}" == "build" ]]
