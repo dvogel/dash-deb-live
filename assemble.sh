@@ -68,11 +68,13 @@ if [[ "${1}" == "build" ]]; then
 
     function cleanup_after_build_or_error () {
         set +o errexit
-#        if [[ -d "${TARGETPATH}" ]]; then
-#            chroot "${TARGETPATH}" pkill uuidd
-#            chroot "${TARGETPATH}" pkill dbus-daemon
-#            sleep 1
-#        fi
+        if [[ -d "${TARGETPATH}" ]]; then
+            pids=$(sudo lsof -Fp "${TARGETPATH}" | sed -e '/^p/!d' -e 's/^p//')
+            for pid in $pids; do
+                kill $pid
+                sleep 1
+            done
+        fi
         umount "${EFIPATH}"
         umount "${TARGETPATH}"
         [[ "${OUTSIDE_PROCPATH}" ]] && umount "${OUTSIDE_PROCPATH}"
