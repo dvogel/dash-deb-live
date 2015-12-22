@@ -68,11 +68,11 @@ if [[ "${1}" == "build" ]]; then
 
     function cleanup_after_build_or_error () {
         set +o errexit
-        if [[ -d "${TARGETPATH}" ]]; then
-            chroot "${TARGETPATH}" pkill uuidd
-            chroot "${TARGETPATH}" pkill dbus-daemon
-            sleep 1
-        fi
+#        if [[ -d "${TARGETPATH}" ]]; then
+#            chroot "${TARGETPATH}" pkill uuidd
+#            chroot "${TARGETPATH}" pkill dbus-daemon
+#            sleep 1
+#        fi
         umount "${EFIPATH}"
         umount "${TARGETPATH}"
         [[ "${OUTSIDE_PROCPATH}" ]] && umount "${OUTSIDE_PROCPATH}"
@@ -158,7 +158,7 @@ if [[ "${1}" == "build" ]]; then
 
     # Create a naive set of device files inside the chroot. We have to do this
     # before we bind the host /dev/pts to the /dev/pts path inside the chroot.
-    chroot "${TARGETPATH}" /sbin/MAKEDEV -d /dev generic
+    chroot "${TARGETPATH}" /sbin/MAKEDEV
 
     OUTSIDE_DEVPTSPATH="${TARGETPATH}/dev/pts"
     mount --bind /dev/pts "${OUTSIDE_DEVPTSPATH}"
