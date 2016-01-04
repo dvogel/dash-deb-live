@@ -8,7 +8,7 @@
 # time. You should first confirm that the error is coming from `apt` or `dpkg`
 # and isn't user error (e.g. you didn't accidentally copy a huge file into
 # the src/post-bootstrap directory).
-CFG_DISKSIZE_MB=4000
+CFG_DISKSIZE_MB=7095
 
 
 if [[ "$UID" -ne 0 ]]; then
@@ -62,6 +62,8 @@ if [[ "${1}" == "build" ]]; then
         fi
     done
     WORKPATH=$(readlink -f "${WORKDIR}")
+    SCRATCHPATH="${WORKPATH}/scratch"
+    TMPDISKFILE="${SCRATCHPATH}/DISK"
     DISKFILE="${WORKPATH}/DISK"
     TARGETPATH="${WORKPATH}/target"
     EFIPATH="${WORKPATH}/efi"
@@ -75,15 +77,19 @@ if [[ "${1}" == "build" ]]; then
                 sleep 1
             done
         fi
-        umount "${EFIPATH}"
-        umount "${TARGETPATH}"
         [[ "${OUTSIDE_PROCPATH}" ]] && umount "${OUTSIDE_PROCPATH}"
         [[ "${OUTSIDE_DEVPTSPATH}" != "" ]] && umount "${OUTSIDE_DEVPTSPATH}"
+        umount "${TARGETPATH}"
+        umount "${EFIPATH}"
+        [[ -f "${TMPDISKFILE}" ]] && cp "${TMPDISKFILE}" "${DISKFILE}"
         losetup --detach "${LOOP_DEVICE}"
+        umount "${SCRATCHPATH}"
     }
     trap "{ cleanup_after_build_or_error; }" EXIT
 
     mkdir "${WORKPATH}"
+    mkdir "${SCRATCHPATH}"
+    mount -t tmpfs none "${SCRATCHPATH}"
     mkdir "${TARGETPATH}"
     mkdir "${EFIPATH}"
 
@@ -92,27 +98,27 @@ if [[ "${1}" == "build" ]]; then
     # use the seek= option alongwith count=0, the disk isn't actually zeroed.
     # If you want the disk to be zeroed, change this to use:
     #     seek=0 count="${CFG_DISKSIZE_MB}"
-    dd if=/dev/zero of="${DISKFILE}" bs=1M count=0 seek="${CFG_DISKSIZE_MB}"
+    dd if=/dev/zero of="${TMPDISKFILE}" bs=1M count=0 seek="${CFG_DISKSIZE_MB}"
 
-    if [[ ! -f "${DISKFILE}" ]]; then
+    if [[ ! -f "${TMPDISKFILE}" ]]; then
         # Super paranoid check to ensure we created the disk file.
-        echo "Cannot find disk file: ${DISKFILE}"
+        echo "Cannot find disk file: ${TMPDISKFILE}"
         exit
     fi
 
     # Create two partitions. The first is a UEFI System Partition (ESP). The
     # second is where we will install our linux system.
-    parted --script "${DISKFILE}" -- mklabel gpt
-    parted --script "${DISKFILE}" -- mkpart primary fat32 0 256MiB
-    parted --script "${DISKFILE}" -- mkpart primary ext3 257MiB -1MiB
-    parted --script "${DISKFILE}" -- set 1 boot on
-    parted --script "${DISKFILE}" -- set 1 esp on
-    parted --script "${DISKFILE}" -- print
+    parted --script "${TMPDISKFILE}" -- mklabel gpt
+    parted --script "${TMPDISKFILE}" -- mkpart primary fat32 0 512MiB
+    parted --script "${TMPDISKFILE}" -- mkpart primary ext3 512MiB -1MiB
+    parted --script "${TMPDISKFILE}" -- set 1 boot on
+    parted --script "${TMPDISKFILE}" -- set 1 esp on
+    parted --script "${TMPDISKFILE}" -- print
 
     # Attach the new disk file to a loopback device. The --partscan option
     # causes each partition to be detected and attached to a new loopback
     # device with a "pN" suffix, where "N" is the 1-based partition number.
-    LOOP_DEVICE=$(losetup --partscan --find --show "${DISKFILE}")
+    LOOP_DEVICE=$(losetup --partscan --find --show "${TMPDISKFILE}")
     if [[ ! -b "${LOOP_DEVICE}" ]]; then
         echo "The loopback device doesn't appear to be a block device: ${LOOP_DEVICE}"
         exit
@@ -135,7 +141,7 @@ if [[ "${1}" == "build" ]]; then
 
     DEBOOTSTRAP_PKGLIST=$(cat PACKAGES | sed -e '/^\s*$/d' -e '/^#/d' | tr '\n' ',')
     APT_PKGLIST=$(cat PACKAGES | sed -e '/^\s*$/d' -e '/^#/d' | tr '\n' ' ')
-    debootstrap --arch=amd64 --components=main,contrib,non-free --include=makedev,locales,procps --no-check-gpg --keep-debootstrap-dir stretch "${TARGETPATH}"
+    debootstrap --arch=amd64 --components=main,contrib,non-free --include=makedev,locales,procps,debconf-utils --no-check-gpg --keep-debootstrap-dir stretch "${TARGETPATH}"
 
     # Copy any packages downloaded by debootstrap back into our shared cache.
     function cache_downloaded_packages () {
@@ -166,20 +172,32 @@ if [[ "${1}" == "build" ]]; then
     mount --bind /dev/pts "${OUTSIDE_DEVPTSPATH}"
 
 
+    cache_downloaded_packages
+
+    # Pre-configure packages that require user interaction.
+    chroot "${TARGETPATH}" debconf-set-selections < src/debconf-selections
+
     # Create a script inside the target directory so that it can be run from within a chroot
     INSIDE_SCRIPTPATH="/tmp/setup-inside-chroot.sh"
     OUTSIDE_SCRIPTPATH="${TARGETPATH}${INSIDE_SCRIPTPATH}"
     ensure_directory_exists "${OUTSIDE_SCRIPTPATH}"
     cat > "${OUTSIDE_SCRIPTPATH}" <<-EOF
+        mkdir /var/lib/lightdm/data
+        chown lightdm:lightdm /var/lib/lightdm/data
+
+        mkdir /var/log/journal
+        chgrp systemd-journal /var/log/journal
+        chmod g+rwx /var/log/journal
+
 	groupadd --system autologin
 	groupadd --system nopasswdlogin
 	useradd --user-group --groups autologin,nopasswdlogin,netdev,sudo cctv
 	echo cctv:cctv | chpasswd
+        chsh --shell /bin/bash cctv
 
 
         export DEBIAN_PRIORITY=critical
         export DEBIAN_FRONTEND=noninteractive
-        apt-get clean
         apt-get update
         RUNLEVEL=1 apt-get -o Dpkg::Options::="--force-confdef" -o Dpkg::Options::="--force-confnew" --assume-yes --show-progress install ${APT_PKGLIST}
 EOF
@@ -187,12 +205,17 @@ EOF
     chroot "${TARGETPATH}" "${INSIDE_SCRIPTPATH}"
 
     cache_downloaded_packages
+    chroot "${TARGETPATH}" apt-get clean
 
     # Copy our config files into the chroot
-    rsync --verbose --recursive --links --times src/post-bootstrap/ "${TARGETPATH}/"    
+    rsync --verbose --recursive --links --times src/post-bootstrap/ "${TARGETPATH}/"
     chroot "${TARGETPATH}" locale-gen
     chroot "${TARGETPATH}" chown -R cctv:cctv "/home/cctv"
+    chroot "${TARGETPATH}" bash /tmp/rtl8723bs/build.sh
 
+    export TARGETPATH
+    export EFIPATH
+    bash copy_kernel_files_to_efi.sh
 
 fi # End of [[ "${1}" == "build" ]]
 

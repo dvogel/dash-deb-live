@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# vim: filetype=bash
+
+if [[ $SHLVL -lt 2 ]]; then
+    echo "This script should always be run from another shell (SHLVL=$SHLVL)"
+    exit 1
+fi
+
+set -o errexit
+cd ~/.config/cctv
+for fil in $(find . -name '*.cfg.sh'); do
+    source "$fil"
+done
+
+if [[ "$CCTV_DASHBOARD_URL" == "" ]]; then
+    echo "CCTV_DASHBOARD_URL is not set."
+    exit 2
+fi
+dashboard_url=$(cat ~/.config/cctv/*.cfg.sh)
+
+chromium --app="$CCTV_DASHBOARD_URL"
+

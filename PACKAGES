@@ -11,6 +11,7 @@ user-setup
 sudo
 eject
 rungetty
+bash-completion
 
 # Install these so we can test disk images in virtualbox.
 virtualbox-guest-x11
@@ -24,6 +25,10 @@ wicd-daemon
 wicd-cli
 wicd-gtk
 firmware-realtek
+firmware-ralink
+firmware-iwlwifi
+firmware-ipw2x00
+intel-gpu-tools
 
 # System inspection utils.
 bluetooth
@@ -43,7 +48,9 @@ xorg
 xserver-xorg-core
 xserver-xorg-input-all
 xserver-xorg-video-intel
+ttf-mscorefonts-installer
 lightdm
+accountsservice
 openbox
 openbox-menu
 obconf
