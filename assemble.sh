@@ -9,7 +9,7 @@
 # and isn't user error (e.g. you didn't accidentally copy a huge file into
 # the src/post-bootstrap directory).
 CFG_DISKSIZE_MB=7095
-
+USE_TMPFS="NO"
 
 if [[ "$UID" -ne 0 ]]; then
     echo "This script must be run using sudo."
@@ -63,8 +63,13 @@ if [[ "${1}" == "build" ]]; then
     done
     WORKPATH=$(readlink -f "${WORKDIR}")
     SCRATCHPATH="${WORKPATH}/scratch"
-    TMPDISKFILE="${SCRATCHPATH}/DISK"
     DISKFILE="${WORKPATH}/DISK"
+    if [[ "$USE_TMPFS" == "YES" ]];then
+        TMPDISKFILE="${SCRATCHPATH}/DISK"
+    else
+        TMPDISKFILE="${DISKFILE}"
+    fi
+
     TARGETPATH="${WORKPATH}/target"
     EFIPATH="${WORKPATH}/efi"
 
@@ -81,15 +86,17 @@ if [[ "${1}" == "build" ]]; then
         [[ "${OUTSIDE_DEVPTSPATH}" != "" ]] && umount "${OUTSIDE_DEVPTSPATH}"
         umount "${TARGETPATH}"
         umount "${EFIPATH}"
-        [[ -f "${TMPDISKFILE}" ]] && cp "${TMPDISKFILE}" "${DISKFILE}"
+        [[ -f "${TMPDISKFILE}" ]] && [[ "${TMPDISKFILE}" != "${DISKFILE}" ]] && cp "${TMPDISKFILE}" "${DISKFILE}"
         losetup --detach "${LOOP_DEVICE}"
-        umount "${SCRATCHPATH}"
+        [[ -d "${SCRATCHPATH}" ]] && umount "${SCRATCHPATH}"
     }
     trap "{ cleanup_after_build_or_error; }" EXIT
 
     mkdir "${WORKPATH}"
-    mkdir "${SCRATCHPATH}"
-    mount -t tmpfs none "${SCRATCHPATH}"
+    if [[ "$USE_TMPFS" == "YES" ]]; then
+        mkdir "${SCRATCHPATH}"
+        mount -t tmpfs none "${SCRATCHPATH}"
+    fi
     mkdir "${TARGETPATH}"
     mkdir "${EFIPATH}"
 
@@ -212,6 +219,7 @@ EOF
     chroot "${TARGETPATH}" locale-gen
     chroot "${TARGETPATH}" chown -R cctv:cctv "/home/cctv"
     chroot "${TARGETPATH}" bash /tmp/rtl8723bs/build.sh
+    chroot "${TARGETPATH}" bash /tmp/fixhostsfile.sh
 
     export TARGETPATH
     export EFIPATH
