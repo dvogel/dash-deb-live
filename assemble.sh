@@ -84,6 +84,7 @@ if [[ "${1}" == "build" ]]; then
         fi
         [[ "${OUTSIDE_PROCPATH}" ]] && umount "${OUTSIDE_PROCPATH}"
         [[ "${OUTSIDE_DEVPTSPATH}" != "" ]] && umount "${OUTSIDE_DEVPTSPATH}"
+        cp -R "${TARGETPATH}/debootstrap" "${WORKDIR}/debootstrap"
         umount "${TARGETPATH}"
         umount "${EFIPATH}"
         [[ -f "${TMPDISKFILE}" ]] && [[ "${TMPDISKFILE}" != "${DISKFILE}" ]] && cp "${TMPDISKFILE}" "${DISKFILE}"
